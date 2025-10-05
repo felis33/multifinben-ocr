@@ -1,11 +1,14 @@
 from transformers import AutoProcessor, AutoModelForVision2Seq, BlipProcessor, BlipForConditionalGeneration, BitsAndBytesConfig
+from transformers import AutoTokenizer, AutoModelForCausalLM
+from qwen_omni_utils import process_mm_info
 from transformers import Qwen2_5OmniForConditionalGeneration, Qwen2_5OmniProcessor
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 import torch
 from openai import OpenAI
 import base64
 import io
 import os
+import binascii
 
 class Agent:
     def __init__(self, model_name):
@@ -139,9 +142,38 @@ class Agent:
         else:
             raise ValueError(f"Unsupported model: {model_name}")
 
-    def draft(self, image_path):
-        image = Image.open(image_path).convert("RGB") # comment out if using TheFinAI/MultiFinBen-EnglishOCR
+    def _load_image(self, source):
+        if isinstance(source, Image.Image):
+            return source.convert("RGB")
 
+        if isinstance(source, (bytes, bytearray)):
+            return Image.open(io.BytesIO(source)).convert("RGB")
+
+        if isinstance(source, dict):
+            # Hugging Face datasets often store images as {"path": ..., "bytes": ...}
+            if "bytes" in source:
+                return Image.open(io.BytesIO(source["bytes"])).convert("RGB")
+            if "path" in source and source["path"] and os.path.exists(source["path"]):
+                return Image.open(source["path"]).convert("RGB")
+
+        if isinstance(source, str):
+            trimmed = source.strip()
+            if os.path.exists(trimmed):
+                return Image.open(trimmed).convert("RGB")
+
+            # Handle base64 strings (optionally prefixed with data URI)
+            if trimmed.startswith("data:"):
+                _, _, trimmed = trimmed.partition(",")
+            try:
+                decoded = base64.b64decode("".join(trimmed.split()), validate=True)
+                return Image.open(io.BytesIO(decoded)).convert("RGB")
+            except (binascii.Error, UnidentifiedImageError, OSError, ValueError):
+                pass
+
+        raise ValueError("Unsupported image input; expected file path, base64 string, bytes, dict, or PIL Image")
+
+    def draft(self, image_input):
+        image = self._load_image(image_input)
         
         prompt = "Convert this financial statement page into semantically correct HTML. Return html and nothing else. Use plain html only, no styling please."
 
@@ -186,8 +218,6 @@ class Agent:
         elif "qwen" in self.model_name.lower():
 
             if "omni" in self.model_name.lower():
-                USE_AUDIO_IN_VIDEO = True
-
                 conversation = [
                     {
                         "role": "system",
@@ -201,44 +231,54 @@ class Agent:
                     {
                         "role": "user",
                         "content": [
-                            {"type": "image", "image": image_path},
+                            {"type": "text", "text": prompt},
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image", "image": image},
                         ],
                     },
                 ]
 
+                
+                USE_AUDIO_IN_VIDEO = False
+
+                # Preparation for inference
                 text = self.processor.apply_chat_template(
                     conversation, add_generation_prompt=True, tokenize=False
                 )
-
-                audios, images, videos = process_mm_info(
+                audios, images, videos = process_mm_info(  # type: ignore
                     conversation, use_audio_in_video=USE_AUDIO_IN_VIDEO
                 )
+
+
                 inputs = self.processor(
                     text=text,
                     audio=audios,
                     images=images,
-                    # videos=videos,
-                    return_tensors="pt",
-                    padding=True,
-                    use_audio_in_video=USE_AUDIO_IN_VIDEO,
+                    videos=videos,
+                    return_tensors="pt",  # type: ignore
+                    padding=True,  # type: ignore
+                    use_audio_in_video=USE_AUDIO_IN_VIDEO,  # type: ignore
                 )
-                inputs = inputs.to(self.device).to(self.model.dtype)
+                inputs = inputs.to(self.model.device).to(self.model.dtype)
+                input_length = inputs['input_ids'].shape[1]
+                
+                text_ids, _ = self.model.generate(**inputs, use_audio_in_video=USE_AUDIO_IN_VIDEO)
+                
+                generated_ids = text_ids[:, input_length:]
 
-                with torch.no_grad():
-                    text_ids, audio = self.model.generate(
-                        **inputs, use_audio_in_video=USE_AUDIO_IN_VIDEO
-                    )
-
-                result = self.processor.decode(
-                    text_ids[0],
-                    skip_special_tokens=True,
-                    clean_up_tokenization_spaces=False,
+                # Decode only the generated tokens
+                output_text = self.processor.batch_decode(
+                    generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False
                 )
 
             else:
                 query = self.processor.from_list_format(
                     [
-                        {"image": image_path},
+                        {"image": image},
                         {"text": prompt},
                     ]
                 )
@@ -249,8 +289,9 @@ class Agent:
                     output = self.model.generate(**inputs, max_new_tokens=1024)
 
                 result = self.processor.decode(output[0], skip_special_tokens=True)
-
-            return result
+            
+            print(output_text[0])
+            return output_text[0]
 
         elif "deepseek" in self.model_name.lower():
 
@@ -363,11 +404,10 @@ class Agent:
             return result
 
         elif "gpt-4o" in self.model_name:
-            buffered = io.BytesIO() # comment out if using TheFinAI/MultiFinBen-EnglishOCR
-            image.save(buffered, format="PNG")# comment out if using TheFinAI/MultiFinBen-EnglishOCR
-            img_bytes = buffered.getvalue()# comment out if using TheFinAI/MultiFinBen-EnglishOCR
-            b64_image = base64.b64encode(img_bytes).decode("utf-8")# comment out if using TheFinAI/MultiFinBen-EnglishOCR
-            # b64_image = image_path # use this line only if using TheFinAI/MultiFinBen-EnglishOCR
+            buffered = io.BytesIO()
+            image.save(buffered, format="PNG")
+            img_bytes = buffered.getvalue()
+            b64_image = base64.b64encode(img_bytes).decode("utf-8")
             
             client = OpenAI(
                 # This is the default and can be omitted
@@ -389,11 +429,10 @@ class Agent:
             return response.choices[0].message.content
         
         elif "gpt-5" in self.model_name:
-            # buffered = io.BytesIO() # comment out if using TheFinAI/MultiFinBen-EnglishOCR
-            # image.save(buffered, format="PNG")# comment out if using TheFinAI/MultiFinBen-EnglishOCR
-            # img_bytes = buffered.getvalue()# comment out if using TheFinAI/MultiFinBen-EnglishOCR
-            # b64_image = base64.b64encode(img_bytes).decode("utf-8")# comment out if using TheFinAI/MultiFinBen-EnglishOCR
-            b64_image = image_path # use this line only if using TheFinAI/MultiFinBen-EnglishOCR
+            buffered = io.BytesIO()
+            image.save(buffered, format="PNG")
+            img_bytes = buffered.getvalue()
+            b64_image = base64.b64encode(img_bytes).decode("utf-8")
             
             client = OpenAI(
                 # This is the default and can be omitted

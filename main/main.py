@@ -3,8 +3,51 @@ from lib.tools import Tools
 import pandas as pd
 from tqdm import tqdm
 from datasets import load_dataset
-import os
+from pathlib import Path
+from urllib.parse import quote, unquote
 import time
+
+
+LANGUAGE_OUTPUT_ROOT = {
+    "en": Path("hyr_results/predictions"),
+    "es": Path("hyr_results/predictions_spanish"),
+    "gr": Path("hyr_results/predictions_greek"),
+    "jp": Path("hyr_results/predictions_japanese"),
+}
+
+
+def _build_experiment_folder(language: str, model_name: str, experiment_tag: str) -> Path:
+    try:
+        base_dir = LANGUAGE_OUTPUT_ROOT[language]
+    except KeyError:
+        raise ValueError(f"Unsupported language '{language}'.")
+
+    safe_model_name = model_name.replace("/", "__")
+    experiment_name = f"{safe_model_name}_{experiment_tag}_financial"
+    experiment_folder = base_dir / experiment_name
+    experiment_folder.mkdir(parents=True, exist_ok=True)
+    return experiment_folder
+
+
+def _collect_completed_ids(experiment_folder: Path) -> set[str]:
+    completed = set()
+    if not experiment_folder.exists():
+        return completed
+
+    for file_path in experiment_folder.iterdir():
+        if not file_path.is_file():
+            continue
+        stem = file_path.stem
+        if not stem.startswith("pred_"):
+            continue
+        encoded_id = stem[len("pred_"):]
+        completed.add(unquote(encoded_id))
+    return completed
+
+
+def _encode_sample_id(sample_id: str) -> str:
+    encoded = quote(sample_id, safe="")
+    return encoded or "sample"
 
 def evaluate(model_name="gpt-4o", experiment_tag="zero-shot",language = "en", local_version = False, sample = None):
     tools = Tools()
@@ -37,55 +80,39 @@ def evaluate(model_name="gpt-4o", experiment_tag="zero-shot",language = "en", lo
         print("Not a valid choice of language, please try again.")
         return language
     
-    experiment_name = f"{model_name}_{experiment_tag}_financial"
-
-    if language == "en":
-        experiment_folder = os.path.join("hyr_results/predictions/", experiment_name)
-    elif language == "es":
-        experiment_folder = os.path.join("hyr_results/predictions_spanish/", experiment_name)
-    elif language == "gr":
-        experiment_folder = os.path.join("hyr_results/predictions_greek/", experiment_name)
-    elif language == "jp":
-        experiment_folder = os.path.join("hyr_results/predictions_japanese/", experiment_name)
-
-    os.makedirs(experiment_folder, exist_ok=True)
+    experiment_folder = _build_experiment_folder(language, model_name, experiment_tag)
 
     # Get predicted indices from filenames
-    predicted_indices = set()
-    if os.path.exists(experiment_folder):
-        for fname in os.listdir(experiment_folder):
-            if fname.startswith("pred_") and fname.endswith(".txt"):
-                try:
-                    idx = int(fname.replace("pred_", "").replace(".txt", ""))
-                    predicted_indices.add(idx)
-                except:
-                    continue
+    predicted_ids = _collect_completed_ids(experiment_folder)
 
     # Filter out completed predictions
-    df = df[~df.index.isin(predicted_indices)]
+    df = df[~df.index.astype(str).isin(predicted_ids)]
 
     # Apply sample AFTER filtering
     if sample:
         df = df.head(sample)  # get sample
 
     agent = Agent(model_name)
+    
 
     for i, row in tqdm(df.iterrows(), total=len(df), desc=f"Running {model_name}"):
         # image_path = row["image_path"] # corresponds to local version
         image_path = row["image"] # corresponds to TheFinAI/MultiFinBen-EnglishOCR, image is in base64 format
         # ground_truth = row["matched_html"]
-        output_file = os.path.join(experiment_folder, f"pred_{i}.txt")
+        sample_id = str(i)
+        encoded_sample_id = _encode_sample_id(sample_id)
+        output_file = experiment_folder / f"pred_{encoded_sample_id}"
 
         try:
             result = agent.draft(image_path)
-            with open(output_file, "w", encoding="utf-8") as f:
-                f.write(result)
+            print(result)
+            tools.save_text(result, output_file, suffix=".html")
             time.sleep(1.5)
             print(f"Finished processing")
         except Exception as e:
             print(f"⚠️ Error on index {i}: {e}")
             continue
-        
+    
     # for i, row in tqdm(df.iterrows(), total=len(df), desc=f"Running {model_name}"):
     #     image_path = row.get("image_path", row.get("image"))
     #     #image_path = os.path.join(local_dir, image_path).replace("./", "").replace("Japanese/", "")
@@ -101,7 +128,7 @@ def evaluate(model_name="gpt-4o", experiment_tag="zero-shot",language = "en", lo
     #         continue
 
 def main():
-    evaluate(model_name="Qwen/Qwen2.5-Omni-7B",language = "jp" , sample = 10)
+    evaluate(model_name="Qwen/Qwen2.5-Omni-7B",language = "jp" , sample = 1)
 
 if __name__ == '__main__':
     main()

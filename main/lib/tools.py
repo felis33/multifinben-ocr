@@ -8,6 +8,7 @@ import seaborn as sns
 
 import json
 import os
+from pathlib import Path
 
 import nltk 
 from nltk.metrics.distance import jaccard_distance, masi_distance
@@ -27,9 +28,20 @@ import requests
 from bs4 import BeautifulSoup
 
 class Tools:
-    def save_text(self, text, output_path):
-        with open(output_path.replace('.jpg', '.txt'), 'w', encoding='utf-8') as f:
-            f.write(text)
+    def save_text(self, text, output_path, suffix=".txt"):
+        path = Path(output_path)
+
+        # If the provided path has an image extension, replace it with the desired suffix
+        if path.suffix.lower() in {".jpg", ".jpeg", ".png"}:
+            path = path.with_suffix(suffix)
+        elif not path.suffix and suffix:
+            path = path.with_suffix(suffix)
+        elif suffix and path.suffix != suffix:
+            path = path.with_suffix(suffix)
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text if isinstance(text, str) else str(text), encoding="utf-8")
+        return str(path)
 
     def convert_excel_to_json(self, file_path, output_folder):
         # Read the Excel file with two header rows -- Modify this if your Excel file has a different structure
