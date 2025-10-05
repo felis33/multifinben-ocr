@@ -1,6 +1,10 @@
 # MultiFinBenOCR
 Repo for MultiFinBen OCR task
 
+# New Run
+```
+CUDA_LAUNCH_BLOCKING=1 python main/main.py
+```
 
 # How to use 
 1. Before running gpt, please go to <b>main/lib/agent.py</b> and put in your openai_api_key
