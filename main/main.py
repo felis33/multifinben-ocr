@@ -76,6 +76,9 @@ def evaluate(model_name="gpt-4o", experiment_tag="zero-shot",language = "en", lo
         else:
             ds_jp = load_dataset("TheFinAI/OCR_Task", data_files = ["OCR_DATA/base64_encoded_version/JapaneseOCR_full_000.parquet"])
             df = ds_jp['train'].to_pandas()
+            df = df.iloc[:600]
+            #df = df.iloc[-600:]
+            
     else: 
         print("Not a valid choice of language, please try again.")
         return language
@@ -107,28 +110,15 @@ def evaluate(model_name="gpt-4o", experiment_tag="zero-shot",language = "en", lo
             result = agent.draft(image_path)
             print(result)
             tools.save_text(result, output_file, suffix=".html")
-            time.sleep(1.5)
+            time.sleep(1)
             print(f"Finished processing")
+            
         except Exception as e:
             print(f"⚠️ Error on index {i}: {e}")
             continue
     
-    # for i, row in tqdm(df.iterrows(), total=len(df), desc=f"Running {model_name}"):
-    #     image_path = row.get("image_path", row.get("image"))
-    #     #image_path = os.path.join(local_dir, image_path).replace("./", "").replace("Japanese/", "")
-    #     output_file = os.path.join(experiment_folder, f"pred_{i}.txt")
-
-    #     try:
-    #         result = agent.draft(image_path, local_version=local_version)
-    #         with open(output_file, "w", encoding="utf-8") as f:
-    #             f.write(result)
-    #         # time.sleep(1)
-    #     except Exception as e:
-    #         print(f"⚠️ Error on index {i}: {e}")
-    #         continue
-
 def main():
-    evaluate(model_name="Qwen/Qwen2.5-Omni-7B",language = "jp" , sample = 1)
+    evaluate(model_name="Qwen/Qwen2.5-Omni-7B",language = "jp" , sample = 500)
 
 if __name__ == '__main__':
     main()

@@ -10,6 +10,9 @@ import io
 import os
 import binascii
 
+torch.backends.cudnn.deterministic = True
+torch.autograd.set_detect_anomaly(True)
+
 class Agent:
     def __init__(self, model_name):
         self.model_name = model_name
