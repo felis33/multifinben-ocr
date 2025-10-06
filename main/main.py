@@ -76,8 +76,8 @@ def evaluate(model_name="gpt-4o", experiment_tag="zero-shot",language = "en", lo
         else:
             ds_jp = load_dataset("TheFinAI/OCR_Task", data_files = ["OCR_DATA/base64_encoded_version/JapaneseOCR_full_000.parquet"])
             df = ds_jp['train'].to_pandas()
-            df = df.iloc[:600]
-            #df = df.iloc[-600:]
+            #df = df.iloc[:600]
+            df = df.iloc[-600:]
             
     else: 
         print("Not a valid choice of language, please try again.")
